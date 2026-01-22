@@ -3,90 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Russian Translator & News</title>
+    <title>News Pulse Report</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <div class="container">
+<div class="page-container">
+
+    <!-- Main Heading -->
+    <header class="main-header">
+        <h1>News Pulse Report</h1>
+        <button id="logout-btn" class="logout-btn">🚪 Logout</button>
+    </header>
+
+    <!-- Top Section -->
+    <section class="top-section">
+
+        <!-- Summary Box -->
+        <div class="summary-box">
+            <h2>Summary</h2>
+            <p id="summary-text">
+                Key highlights and overall sentiment of today’s news will appear here.
+            </p>
+        </div>
+
+        <!-- News Channels Box -->
+        <div class="channels-box">
+            <h2>News Channels</h2>
+            <div class="channel-logos">
+                <img src="channel_images/RT.png" alt="RT">
+                <img src="channel_images/channelOne.png" alt="Channel One">
+                <img src="channel_images/vesti.png" alt="Vesti">
+                <img src="channel_images/ntv.png" alt="NTV">
+                <img src="channel_images/rentv.png" alt="Ren TV">
+                <img src="channel_images/zvezda.png" alt="Zvezda">
+                <img src="channel_images/mir.png" alt="Mir TV">
+                <img src="channel_images/tvc.png" alt="TVC">
+
+            </div>
+        </div>
+
+    </section>
+
+    <!-- News Headlines Section -->
+    <section class="news-section">
+        <div class="news-header">
+            <h2 id="news-title">Today's News</h2>
+            <div class="news-controls">
+                <button id="btn-history" class="control-btn">📅 View History</button>
+                <button id="btn-back-today" class="control-btn" style="display:none;">🔙 Back to Today</button>
+            </div>
+        </div>
         
-        <div class="pane left-pane">
-            <div class="translator-container">
-                <h2>Russian Video Captions Generator</h2>
-                <p class="subtitle">Generate English captions for Russian YouTube videos</p>
-
-                <div id="form-url" class="input-group">
-                    <input type="text" id="youtube-url" class="tr-input" placeholder="Paste Russian YouTube video link here...">
-                </div>
-
-                <button id="btn-generate" class="btn-translate">Generate English Captions</button>
-
-                <div id="progress-area" class="progress-area" style="display: none;">
-                    <div class="progress-step">
-                        <span class="step-icon" id="step-1">⏳</span>
-                        <span class="step-text">Fetching transcript...</span>
-                    </div>
-                    <div class="progress-step">
-                        <span class="step-icon" id="step-2">⏳</span>
-                        <span class="step-text">Translating to English...</span>
-                    </div>
-                    <div class="progress-step">
-                        <span class="step-icon" id="step-3">⏳</span>
-                        <span class="step-text">Generating captions...</span>
-                    </div>
-                    <div class="progress-step">
-                        <span class="step-icon" id="step-4">⏳</span>
-                        <span class="step-text">Ready!</span>
-                    </div>
-                </div>
-
-                <div id="video-player-area" style="display: none;">
-                    <div id="video-container"></div>
-                    <div class="caption-controls">
-                        <button id="btn-download-srt" class="btn-small">Download SRT</button>
-                        <select id="caption-language">
-                            <option value="en">English</option>
-                            <option value="ru">Russian</option>
-                            <option value="both">Both</option>
-                        </select>
-                    </div>
-                    <div id="caption-display"></div>
-                </div>
-
-                <div class="output-area" style="display: none;">
-                    <div id="loading-indicator" class="hidden">
-                        <div class="spinner"></div>
-                        <span>Processing...</span>
-                    </div>
-                    <textarea id="translation-result" placeholder="Captions will appear here..." readonly></textarea>
-                    <div class="output-actions">
-                        <button id="btn-copy" class="btn-small">Copy Text</button>
-                        <button id="btn-download" class="btn-small">Download .txt</button>
-                    </div>
-                </div>
-            </div>
+        <div id="history-controls" class="history-controls" style="display:none;">
+            <label for="history-date">Select Date:</label>
+            <input type="date" id="history-date" />
         </div>
-
-        <div class="pane right-pane">
-            <div class="news-header">
-                <h2 id="news-title">Today's News (Translated)</h2>
-                <button id="btn-history" class="btn-history">History</button>
-                <button id="btn-back-today" class="btn-back" style="display: none;">← Back to Today</button>
-            </div>
-
-            <div id="history-controls" class="history-controls" style="display: none;">
-                <label for="history-date">Select Date:</label>
-                <input type="date" id="history-date">
-            </div>
-
-            <div id="news-feed" class="news-feed">
-                <div class="loading">Loading news sources...</div>
-            </div>
+        
+        <div id="news-feed" class="news-feed">
+            <div class="loading">Loading translated headlines...</div>
         </div>
+    </section>
 
-    </div>
+</div>
 
-    <script src="script.js"></script>
-    <script src="captions.js"></script>
+<script src="script.js"></script>
 </body>
 </html>

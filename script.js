@@ -1,5 +1,6 @@
 // --- Configuration: Real RSS Feeds ---
 const PROXY_BASE = "https://api.allorigins.win/get?url=";
+const API_BASE = "http://localhost:3000/api"; // Backend API base URL
 
 const CHANNELS = [
     { name: "RT (Russian)", url: "https://russian.rt.com/rss" },
@@ -23,7 +24,8 @@ const state = {
     latestDate: null,
     translationCache: {},  // Cache for translated titles
     summaryCache: {},      // Cache for article summaries
-    openSummaries: new Set() // Track which summaries are open
+    openSummaries: new Set(), // Track which summaries are open
+    useMongoHistory: true  // Flag to use MongoDB for history
 };
 
 // --- DOM Elements ---
@@ -33,6 +35,7 @@ const btnBack = document.getElementById('btn-back-today');
 const historyControls = document.getElementById('history-controls');
 const historyDateInput = document.getElementById('history-date');
 const newsTitle = document.getElementById('news-title');
+const summaryText = document.getElementById('summary-text');
 
 // --- Helper: Format Date ---
 function getLocalDateString(dateObj) {
@@ -284,41 +287,193 @@ async function parseRSS(xmlText, channelName) {
     return parsedItems.filter(item => item !== null);
 }
 
+// --- Generate daily news summary using AI ---
+async function generateDailySummary(newsItems) {
+    if (!newsItems || newsItems.length === 0) {
+        return "No news available for summary.";
+    }
+
+    // Update summary box to show loading
+    if (summaryText) {
+        summaryText.textContent = "Analyzing today's headlines...";
+    }
+
+    try {
+        // Call backend API for summarization
+        const response = await fetch(`${API_BASE}/news/summarize`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                headlines: newsItems.slice(0, 30).map(item => ({
+                    title: item.title,
+                    channel: item.channel
+                }))
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('API summarization failed');
+        }
+
+        const data = await response.json();
+        return data.summary || "Summary generation failed.";
+
+    } catch (error) {
+        console.error('Error generating summary:', error);
+        
+        // Fallback: Create a simple summary from headlines
+        return generateSimpleSummary(newsItems);
+    }
+}
+
+// --- Generate simple summary (fallback) ---
+function generateSimpleSummary(newsItems) {
+    if (!newsItems || newsItems.length === 0) {
+        return "No news available today.";
+    }
+
+    const channels = [...new Set(newsItems.map(item => item.channel))];
+    const topStories = newsItems.slice(0, 3);
+    
+    let summary = `Today's news from ${channels.length} Russian channels features ${newsItems.length} headlines. `;
+    summary += `Top stories include: ${topStories.map(item => item.title.split(':')[0] || item.title.substring(0, 50)).join('; ')}.`;
+    
+    return summary;
+}
+
+// --- Update summary box ---
+async function updateSummaryBox(newsItems) {
+    if (!summaryText) return;
+    
+    if (!newsItems || newsItems.length === 0) {
+        summaryText.textContent = "No news available for today.";
+        summaryText.classList.remove('loading');
+        return;
+    }
+
+    // Show loading state
+    summaryText.classList.add('loading');
+
+    // Generate and display summary
+    const summary = await generateDailySummary(newsItems);
+    summaryText.textContent = summary;
+    summaryText.classList.remove('loading');
+}
+
+// --- Save news to MongoDB ---
+async function saveNewsToMongo(newsItems) {
+    try {
+        const response = await fetch(`${API_BASE}/news/save`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                newsItems: newsItems.map(item => ({
+                    title: item.title,
+                    originalTitle: item.originalTitle,
+                    url: item.url,
+                    channel: item.channel,
+                    fetchDate: item.dateStr,
+                    fetchTime: item.timeStr
+                }))
+            })
+        });
+
+        if (!response.ok) throw new Error('Failed to save news to database');
+        
+        const result = await response.json();
+        console.log(`✅ Saved to DB: ${result.results.saved} new, ${result.results.duplicates} duplicates`);
+        return result;
+    } catch (error) {
+        console.error('Error saving to MongoDB:', error);
+        return null;
+    }
+}
+
+// --- Fetch news from MongoDB for specific date ---
+async function fetchNewsFromMongo(date) {
+    try {
+        const endpoint = date ? `${API_BASE}/news/date/${date}` : `${API_BASE}/news/today`;
+        const response = await fetch(endpoint);
+        
+        if (!response.ok) throw new Error('Failed to fetch news from database');
+        
+        const data = await response.json();
+        
+        if (data.status === 'success' && data.news) {
+            // Convert MongoDB format to our app format
+            return data.news.map(item => ({
+                title: item.title,
+                originalTitle: item.originalTitle,
+                url: item.url,
+                channel: item.channel,
+                dateObj: new Date(item.timestamp),
+                dateStr: item.fetchDate,
+                timeStr: item.fetchTime || new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            }));
+        }
+        
+        return [];
+    } catch (error) {
+        console.error('Error fetching from MongoDB:', error);
+        return [];
+    }
+}
+
 // --- Fetch all news ---
 async function fetchAllNews() {
     const now = Date.now();
-    if (state.newsCache.length > 0 && (now - state.lastFetchTime < 300000)) return state.newsCache;
-
-    newsFeed.innerHTML = '<div class="loading">Fetching latest feeds and translating...</div>';
-
-    const allNews = [];
-
-    for (const channel of CHANNELS) {
-        try {
-            const bustCache = `&t=${now}`;
-            const res = await fetch(PROXY_BASE + encodeURIComponent(channel.url) + bustCache);
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (data?.contents) {
-                const items = await parseRSS(data.contents, channel.name);
-                allNews.push(...items);
-            }
-        } catch (err) {
-            console.warn(`Failed to fetch ${channel.name}:`, err);
+    
+    // For today's news, fetch from RSS and save to MongoDB
+    if (state.mode === 'today') {
+        // Use cache if recent
+        if (state.newsCache.length > 0 && (now - state.lastFetchTime < 300000)) {
+            return state.newsCache;
         }
+
+        newsFeed.innerHTML = '<div class="loading">Fetching latest feeds and translating...</div>';
+
+        const allNews = [];
+
+        for (const channel of CHANNELS) {
+            try {
+                const bustCache = `&t=${now}`;
+                const res = await fetch(PROXY_BASE + encodeURIComponent(channel.url) + bustCache);
+                if (!res.ok) continue;
+                const data = await res.json();
+                if (data?.contents) {
+                    const items = await parseRSS(data.contents, channel.name);
+                    allNews.push(...items);
+                }
+            } catch (err) {
+                console.warn(`Failed to fetch ${channel.name}:`, err);
+            }
+        }
+
+        allNews.sort((a, b) => b.dateObj - a.dateObj);
+        state.newsCache = allNews;
+        state.lastFetchTime = Date.now();
+
+        if (allNews.length > 0) {
+            state.latestDate = allNews[0].dateObj;
+            state.earliestDate = allNews[allNews.length - 1].dateObj;
+            
+            // Save today's news to MongoDB
+            await saveNewsToMongo(allNews);
+            
+            // Generate and update summary
+            await updateSummaryBox(allNews);
+        }
+
+        renderNews();
+        return allNews;
     }
-
-    allNews.sort((a, b) => b.dateObj - a.dateObj);
-    state.newsCache = allNews;
-    state.lastFetchTime = Date.now();
-
-    if (allNews.length > 0) {
-        state.latestDate = allNews[0].dateObj;
-        state.earliestDate = allNews[allNews.length - 1].dateObj;
-    }
-
-    renderNews();
-    return allNews;
+    
+    // For history mode, always fetch from MongoDB
+    return state.newsCache;
 }
 
 // --- Create news card ---
@@ -366,12 +521,12 @@ function renderNews(filterDate = null) {
     newsFeed.innerHTML = '';
 
     if (filteredItems.length === 0) {
-        let msg = '<div class="loading" style="color:#d32f2f;">No news found for this date.</div>';
-        if (state.mode === 'history' && state.earliestDate) {
-            msg += `<div style="margin-top:10px; font-size:0.85rem; color:#666; padding:10px; background:#f5f5f5; border-radius:5px;">
-                        <strong>Note:</strong><br>
-                        RSS feeds only store recent items.<br>
-                        Oldest available: ${state.earliestDate.toLocaleString()}
+        const dateInfo = filterDate || 'this date';
+        let msg = `<div class="loading" style="color:#d32f2f;">No news found for ${dateInfo}.</div>`;
+        
+        if (state.mode === 'history') {
+            msg += `<div style="margin-top:10px; font-size:0.85rem; color:#e8eef3; padding:10px; background:rgba(255,255,255,0.1); border-radius:5px;">
+                        <strong>Tip:</strong> News is stored in the database when fetched. Visit a date after news has been collected.
                     </div>`;
         }
         newsFeed.innerHTML = msg;
@@ -395,7 +550,7 @@ async function loadToday() {
     await fetchAllNews();
 }
 
-function loadHistory() {
+async function loadHistory() {
     state.mode = 'history';
     state.openSummaries.clear();
     newsTitle.textContent = "News Archive";
@@ -409,17 +564,63 @@ function loadHistory() {
         historyDateInput.value = getLocalDateString(yesterday);
     }
 
-    fetchAllNews().then(() => renderNews(historyDateInput.value));
+    // Fetch from MongoDB for selected date
+    const selectedDate = historyDateInput.value;
+    newsFeed.innerHTML = '<div class="loading">Loading news from database...</div>';
+    
+    const mongoNews = await fetchNewsFromMongo(selectedDate);
+    
+    if (mongoNews.length > 0) {
+        state.newsCache = mongoNews;
+        renderNews(selectedDate);
+    } else {
+        newsFeed.innerHTML = `<div class="loading" style="color:#d32f2f;">No news found for ${selectedDate}.</div>
+            <div style="margin-top:10px; font-size:0.85rem; color:#e8eef3; padding:10px; background:rgba(255,255,255,0.1); border-radius:5px;">
+                <strong>Note:</strong> News is stored when fetched from RSS feeds. Select a date when news was collected.
+            </div>`;
+    }
 }
 
 // --- Event Listeners ---
 document.addEventListener('DOMContentLoaded', loadToday);
 btnHistory.addEventListener('click', loadHistory);
 btnBack.addEventListener('click', loadToday);
-historyDateInput.addEventListener('change', () => {
+historyDateInput.addEventListener('change', async () => {
     if (state.mode === 'history') {
         state.openSummaries.clear();
-        renderNews(historyDateInput.value);
+        const selectedDate = historyDateInput.value;
+        
+        newsFeed.innerHTML = '<div class="loading">Loading news from database...</div>';
+        const mongoNews = await fetchNewsFromMongo(selectedDate);
+        
+        if (mongoNews.length > 0) {
+            state.newsCache = mongoNews;
+            renderNews(selectedDate);
+        } else {
+            newsFeed.innerHTML = `<div class="loading" style="color:#d32f2f;">No news found for ${selectedDate}.</div>
+                <div style="margin-top:10px; font-size:0.85rem; color:#e8eef3; padding:10px; background:rgba(255,255,255,0.1); border-radius:5px;">
+                    <strong>Note:</strong> News is stored when fetched from RSS feeds. Select a date when news was collected.
+                </div>`;
+        }
     }
 });
 
+// --- Logout Handler ---
+const logoutBtn = document.getElementById('logout-btn');
+if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+        try {
+            const response = await fetch(`${API_BASE}/auth/logout`, {
+                method: 'POST'
+            });
+            
+            if (response.ok) {
+                window.location.href = '/login.html';
+            }
+        } catch (error) {
+            console.error('Logout error:', error);
+            // Redirect anyway
+            window.location.href = '/login.html';
+        }
+    });
+}
